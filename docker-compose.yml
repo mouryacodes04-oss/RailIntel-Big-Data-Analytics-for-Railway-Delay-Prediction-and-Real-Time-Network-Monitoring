@@ -1,0 +1,247 @@
+services:
+  hdfs-namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    hostname: namenode
+    environment:
+      CLUSTER_NAME: railway-analytics
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+      HDFS_CONF_dfs_replication: "1"
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    volumes:
+      - hdfs-namenode-data:/hadoop/dfs/name
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -safemode get >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  hdfs-datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64
+    hostname: datanode
+    environment:
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+      SERVICE_PRECONDITION: namenode:9870
+    ports:
+      - "9864:9864"
+    volumes:
+      - hdfs-datanode-data:/hadoop/dfs/data
+    depends_on:
+      hdfs-namenode:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "hdfs dfsadmin -report 2>/dev/null | grep -q 'Live datanodes (1)'"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 45s
+    restart: unless-stopped
+
+  broker:
+    image: apache/kafka:3.8.1
+    hostname: broker
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: railway
+      POSTGRES_USER: railway
+      POSTGRES_PASSWORD: railway_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./railway_app/sql/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U railway -d railway"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  catalog-loader:
+    build:
+      context: ./railway_app
+    command: ["python", "-m", "railway.catalog_loader"]
+    environment:
+      DATASET_ROOT: /datasets
+      DATABASE_URL: postgresql://railway:railway_dev@postgres:5432/railway
+    volumes:
+      - ./Datasets:/datasets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  producer:
+    build:
+      context: ./railway_app
+    command: ["python", "-m", "railway.simulator"]
+    environment:
+      DATASET_ROOT: /datasets
+      KAFKA_BOOTSTRAP_SERVERS: broker:9092
+      KAFKA_TOPIC: train_positions
+      ACTIVE_TRAINS: ${ACTIVE_TRAINS:-200}
+      EVENT_INTERVAL_SECONDS: ${EVENT_INTERVAL_SECONDS:-2}
+      SIMULATION_SPEED: ${SIMULATION_SPEED:-4}
+    volumes:
+      - ./Datasets:/datasets:ro
+    depends_on:
+      broker:
+        condition: service_healthy
+      catalog-loader:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  stream-processor:
+    build:
+      context: ./railway_app
+    command: ["python", "-m", "railway.stream_processor"]
+    environment:
+      DATABASE_URL: postgresql://railway:railway_dev@postgres:5432/railway
+      KAFKA_BOOTSTRAP_SERVERS: broker:9092
+      KAFKA_TOPIC: train_positions
+      KAFKA_GROUP_ID: railway-prediction-service
+      MODEL_PATH: /models/delay_model.json
+      BASELINE_DELAY_MINUTES: ${BASELINE_DELAY_MINUTES:-15}
+    volumes:
+      - ./models:/models:ro
+    depends_on:
+      broker:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      catalog-loader:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./railway_app
+    command: ["uvicorn", "railway.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      DATABASE_URL: postgresql://railway:railway_dev@postgres:5432/railway
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalog-loader:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  spark-master:
+    build:
+      context: ./analytics
+    command:
+      - bash
+      - -lc
+      - "$$SPARK_HOME/bin/spark-class org.apache.spark.deploy.master.Master --host spark-master --port 7077 --webui-port 8080"
+    environment:
+      SPARK_HOME: /usr/local/lib/python3.11/site-packages/pyspark
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080', timeout=2).read(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - ./analytics:/app:ro
+      - ./Datasets:/datasets:ro
+      - ./data/lake:/data/lake
+      - ./models:/models
+    restart: unless-stopped
+
+  spark-worker:
+    build:
+      context: ./analytics
+    command:
+      - bash
+      - -lc
+      - "$$SPARK_HOME/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 2 --memory 1G"
+    environment:
+      SPARK_HOME: /usr/local/lib/python3.11/site-packages/pyspark
+      SPARK_WORKER_MEMORY: 1G
+      SPARK_WORKER_CORES: 2
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    volumes:
+      - ./analytics:/app:ro
+      - ./Datasets:/datasets:ro
+      - ./data/lake:/data/lake
+      - ./models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8081), 2).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  analytics:
+    build:
+      context: ./analytics
+    profiles: ["analytics"]
+    command: ["bash", "-lc", "echo 'Run the documented spark-submit commands from README.md'"]
+    environment:
+      SPARK_HOME: /usr/local/lib/python3.11/site-packages/pyspark
+      DATASET_ROOT: /datasets
+      LAKE_ROOT: hdfs://namenode:9000/railway/lake
+      HDFS_DEFAULT_FS: hdfs://namenode:9000
+      QUALITY_REPORT_PATH: /data/lake/quality_report.json
+      MODEL_PATH: /models/delay_model.json
+      DATABASE_URL: postgresql://railway:railway_dev@postgres:5432/railway
+    volumes:
+      - ./analytics:/app:ro
+      - ./Datasets:/datasets:ro
+      - ./data/lake:/data/lake
+      - ./models:/models
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      spark-worker:
+        condition: service_healthy
+      hdfs-datanode:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  hdfs-namenode-data:
+  hdfs-datanode-data:

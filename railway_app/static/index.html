@@ -1,0 +1,1190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Railway Live Analytics</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #101820; color: #e8eef2; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #101820; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; border-bottom: 1px solid #263541; background: #15212b; }
+    h1 { margin: 0; font-size: 20px; letter-spacing: .02em; }
+    header small { color: #9eafb9; }
+    .top-nav { display: flex; gap: 8px; padding: 10px 24px; border-bottom: 1px solid #263541; background: #15212b; }
+    .top-nav a { padding: 8px 12px; color: #b7c5ce; border-radius: 6px; text-decoration: none; font-size: 13px; }
+    .top-nav a:hover, .top-nav a[aria-current="page"] { color: #101820; background: #72d6bd; }
+    main { max-width: 1500px; margin: auto; padding: 20px; }
+    .metrics { display: grid; grid-template-columns: repeat(6, minmax(130px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .analytics-metrics { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
+    .analytics-metrics .metric { min-width: 0; }
+    .analytics-metrics .metric strong { font-size: clamp(17px, 2vw, 23px); overflow-wrap: anywhere; }
+    .metric, .panel { border: 1px solid #263541; border-radius: 10px; background: #15212b; }
+    .metric { padding: 14px 16px; }
+    .metric span { display: block; color: #9eafb9; font-size: 12px; }
+    .metric strong { display: block; margin-top: 5px; font-size: 23px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 16px; }
+    #map { height: 570px; border-radius: 10px; background: #243440; }
+    .panel { padding: 16px; overflow: hidden; }
+    .panel h2 { margin: 0 0 12px; font-size: 16px; }
+    .leaflet-container { background: #111923; }
+    .leaflet-control-layers, .leaflet-control-layers-expanded {
+      color: #e8eef2;
+      background: rgba(21, 33, 43, .96);
+      border: 1px solid #405361;
+    }
+    .leaflet-control-layers label { color: #e8eef2; }
+    .map-legend {
+      padding: 9px 11px;
+      color: #e8eef2;
+      background: rgba(21, 33, 43, .96);
+      border: 1px solid #405361;
+      border-radius: 6px;
+      font-size: 11px;
+      line-height: 1.7;
+    }
+    .legend-dot { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 1px solid white; border-radius: 50%; }
+    .train-marker {
+      display: grid;
+      width: 20px;
+      height: 20px;
+      place-items: center;
+      border: 2px solid #f4f7fa;
+      border-radius: 50%;
+      box-shadow: 0 0 0 3px rgba(8, 16, 24, .72), 0 0 14px currentColor;
+      color: white;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1;
+    }
+    .train-marker.selected {
+      width: 28px;
+      height: 28px;
+      border: 3px solid #fff;
+      box-shadow: 0 0 0 4px #a855f7, 0 0 22px #a855f7;
+      background: #a855f7 !important;
+      font-size: 15px;
+    }
+    .train-marker span { transform: translateX(1px); }
+    .station-label {
+      padding: 3px 6px;
+      color: #f4f7fa;
+      background: rgba(12, 24, 34, .94);
+      border: 1px solid #20f0c0;
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, .75);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .station-label.next-stop {
+      color: #101820;
+      background: #ffbe55;
+      border-color: #fff1d2;
+    }
+    .train-list { max-height: 510px; overflow: auto; }
+    .train-row { display: block; width: 100%; text-align: left; cursor: pointer; color: inherit; background: transparent; border: 0; border-top: 1px solid #263541; padding: 11px 2px; }
+    .train-row:hover, .train-row.selected { background: #1d2d39; }
+    .train-row.selected { border-left: 3px solid #a855f7; padding-left: 8px; }
+    .train-row strong { color: #72d6bd; }
+    .train-row span, .muted { color: #9eafb9; font-size: 12px; }
+    .details { margin-top: 12px; padding: 12px; border-radius: 8px; background: #1d2d39; min-height: 90px; font-size: 13px; line-height: 1.6; }
+    .route-timeline-wrap { margin-top: 8px; padding: 4px 0 6px; overflow-x: auto; overflow-y: hidden; border-top: 1px solid #263541; }
+    .route-timeline { position: relative; height: 144px; }
+    .route-timeline-line { position: absolute; top: 69px; right: 5%; left: 5%; height: 5px; border-radius: 4px; background: #405361; }
+    .route-timeline-progress { position: absolute; top: 69px; left: 5%; width: var(--route-progress-width); height: 5px; border-radius: 4px; background: #a855f7; }
+    .route-timeline-station { position: absolute; top: 61px; width: 16px; height: 22px; transform: translateX(-50%); }
+    .route-timeline-dot { display: block; width: 16px; height: 16px; border: 3px solid #9eafb9; border-radius: 50%; background: #15212b; }
+    .route-timeline-station.passed .route-timeline-dot { border-color: #a855f7; background: #a855f7; }
+    .route-timeline-station.current .route-timeline-dot { border-color: #a855f7; background: #a855f7; box-shadow: 0 0 0 4px rgba(168, 85, 247, .25); }
+    .route-timeline-station.next-stop .route-timeline-dot { border-color: #ffbe55; background: #ffbe55; box-shadow: 0 0 0 5px rgba(255, 190, 85, .3), 0 0 16px #ffbe55; }
+    .route-timeline-label { position: absolute; left: 50%; display: block; width: 184px; padding: 2px 4px; color: #b7c5ce; background: #1d2d39; border: 1px solid #344653; border-radius: 4px; font-size: 12px; line-height: 1.3; text-align: center; transform: translateX(-50%); white-space: normal; overflow-wrap: anywhere; }
+    .route-timeline-label.above { top: -40px; }
+    .route-timeline-label.below { top: 19px; }
+    .route-timeline-station.current .route-timeline-label { color: #e4c7ff; font-weight: 700; background: #30243d; border-color: #a855f7; }
+    .route-timeline-station.next-stop .route-timeline-label { color: #ffcf77; font-weight: 800; background: #3a3020; border-color: #ffbe55; box-shadow: 0 0 10px rgba(255, 190, 85, .2); }
+    .route-timeline-train { position: absolute; z-index: 2; top: 56px; left: var(--route-progress-position); display: grid; width: 34px; height: 34px; place-items: center; border: 3px solid #fff; border-radius: 50%; color: #fff; background: #a855f7; box-shadow: 0 0 0 4px rgba(168, 85, 247, .25), 0 0 14px #a855f7; font-size: 16px; font-weight: 900; transform: translateX(-50%); transition: left 1.5s linear; }
+    .route-timeline-train-name { position: absolute; top: 49px; left: var(--route-progress-position); padding: 2px 6px; border: 1px solid #a855f7; border-radius: 5px; color: #e8d5ff; background: #30243d; font-size: 11px; font-weight: 700; white-space: nowrap; transform: translate(-50%, -100%); }
+    #itinerary-table tr.current-stop { background: rgba(168, 85, 247, .2); box-shadow: inset 4px 0 #a855f7; }
+    #itinerary-table tr.current-stop td { border-top: 1px solid #a855f7; border-bottom: 1px solid #a855f7; color: #f0ddff; font-weight: 700; }
+    #itinerary-table tr.next-stop { background: rgba(255, 190, 85, .1); box-shadow: inset 4px 0 #ffbe55; }
+    #itinerary-table tr.next-stop td:last-child { color: #ffcf77; font-weight: 700; }
+    .analytics { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .analytics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
+    .analytics-grid .wide { grid-column: 1 / -1; }
+    .analytics-section { margin: 18px 0 26px; padding: 18px; border: 1px solid #344653; border-radius: 12px; background: #111c25; }
+    .analytics-section > .analytics-heading { padding-bottom: 12px; border-bottom: 1px solid #263541; }
+    .analytics-section > .analytics-heading h2 { margin: 0 0 5px; font-size: 20px; color: #72d6bd; }
+    .analytics-section > .analytics-heading p { max-width: 900px; margin: 0; color: #9eafb9; font-size: 13px; line-height: 1.5; }
+    .analytics-current-metrics { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+    .analytics-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .analytics-heading p, .chart-note, .pipeline-note { margin: 0 0 10px; color: #9eafb9; font-size: 12px; line-height: 1.5; }
+    .analytics-chart { width: 100%; min-height: 180px; overflow-x: auto; }
+    .analytics-chart svg { display: block; width: 100%; min-width: 560px; height: auto; }
+    .analytics-chart .chart-label { fill: #b7c5ce; font-size: 12px; }
+    .analytics-chart .chart-value { fill: #e8eef2; font-size: 12px; font-weight: 700; }
+    .analytics-chart .chart-axis { stroke: #405361; stroke-width: 1; }
+    .analytics-chart .chart-grid { stroke: #263541; stroke-width: 1; stroke-dasharray: 3 5; }
+    .pipeline-flow { display: grid; grid-template-columns: repeat(6, minmax(100px, 1fr)); gap: 8px; align-items: stretch; margin: 12px 0; }
+    .pipeline-step { padding: 10px; border: 1px solid #344653; border-radius: 7px; color: #b7c5ce; background: #1d2d39; font-size: 11px; line-height: 1.45; }
+    .pipeline-step strong { display: block; margin-bottom: 4px; color: #72d6bd; font-size: 12px; }
+    .pipeline-step:not(:last-child)::after { content: "→"; float: right; margin-right: -15px; color: #ffbe55; font-size: 16px; }
+    .analytics-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 14px; }
+    .analytics-toolbar .field { flex: 0 1 200px; }
+    .journey-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .form-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+    .field { display: grid; flex: 1 1 180px; gap: 5px; }
+    .field label { color: #9eafb9; font-size: 12px; }
+    select, input, .action-button {
+      min-height: 38px;
+      padding: 8px 10px;
+      color: #e8eef2;
+      background: #1d2d39;
+      border: 1px solid #405361;
+      border-radius: 6px;
+    }
+    .action-button { cursor: pointer; font-weight: 700; }
+    .action-button:hover { border-color: #72d6bd; }
+    .station-train-link { padding: 0; color: #72d6bd; background: transparent; border: 0; cursor: pointer; text-align: left; }
+    .tool-results { margin-top: 12px; }
+    #route-results { max-height: 420px; overflow: auto; }
+    .route-result { padding: 10px 0; border-top: 1px solid #263541; }
+    .route-result h3 { margin: 0 0 8px; color: #72d6bd; font-size: 13px; }
+    .journey-endpoints { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px; padding: 14px; border: 1px solid #263541; border-radius: 8px; background: #15212b; }
+    .journey-endpoint { display: grid; gap: 5px; min-width: 0; }
+    .journey-endpoint span { color: #9eafb9; font-size: 11px; }
+    .journey-endpoint strong { overflow-wrap: anywhere; }
+    .journey-arrow { color: #72d6bd; font-size: 20px; }
+    .itinerary-wrap { max-height: 300px; margin-top: 12px; }
+    .live-tag { color: #72d6bd; font-weight: 700; }
+    .scheduled-tag { color: #9eafb9; }
+    .assumption { margin: 8px 0 0; color: #9eafb9; font-size: 11px; line-height: 1.5; }
+    .table-wrap { overflow: auto; max-height: 320px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #263541; white-space: nowrap; }
+    th { color: #9eafb9; position: sticky; top: 0; background: #15212b; }
+    #status { color: #72d6bd; font-size: 12px; }
+    body[data-page="journeys"] [data-page]:not([data-page="journeys"]),
+    body[data-page="station-arrivals"] [data-page]:not([data-page="station-arrivals"]),
+    body[data-page="live-status"] [data-page]:not([data-page="live-status"]),
+    body[data-page="analytics"] [data-page]:not([data-page="analytics"]) { display: none; }
+    @media (max-width: 850px) {
+      main { padding: 12px; }
+      .top-nav { gap: 2px; padding: 8px 10px; }
+      .top-nav a { padding: 8px; font-size: 12px; }
+      .layout, .analytics { grid-template-columns: 1fr; }
+      .analytics-grid { grid-template-columns: 1fr; }
+      .analytics-grid .wide { grid-column: auto; }
+      .analytics-section { padding: 12px; }
+      .pipeline-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .pipeline-step:not(:last-child)::after { content: ""; }
+      .journey-tools { grid-template-columns: 1fr; }
+      #map { height: 440px; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .analytics-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Railway Live Analytics <small>· simulated train positions</small></h1>
+    <span id="status">Connecting…</span>
+  </header>
+  <nav class="top-nav" aria-label="Railway dashboard pages">
+    <a href="/journeys">Trains Between Stations</a>
+    <a href="/station-arrivals">Live Station Arrivals</a>
+    <a href="/live-status">Live Train Status</a>
+    <a href="/analytics">Big Data Analytics</a>
+  </nav>
+  <main>
+    <section class="metrics" data-page="live-status">
+      <div class="metric"><span>Active trains</span><strong id="active-count">—</strong></div>
+      <div class="metric"><span>Mean dynamic predicted delay</span><strong id="mean-delay">—</strong></div>
+      <div class="metric"><span>Historical ML predictions</span><strong id="ml-count">—</strong></div>
+      <div class="metric"><span>Delayed (&gt;15 min)</span><strong id="delayed-count">—</strong></div>
+      <div class="metric"><span>On time / early</span><strong id="on-time-count">—</strong></div>
+      <div class="metric"><span>Last processed event (IST)</span><strong id="last-update" style="font-size:14px">—</strong></div>
+    </section>
+    <p class="assumption" data-page="live-status">The source provides timetable times and trip-day offsets, but no operating weekdays; scheduled services are treated as daily. Positions run at accelerated simulation speed, and predicted delay includes a changing simulated variation—not live railway data.</p>
+    <section class="journey-tools" data-page="journeys">
+      <div class="panel">
+        <h2>Trains between stations</h2>
+        <div class="form-row">
+          <div class="field"><label for="from-station">From station</label><input id="from-station" list="station-options" placeholder="Station name or code"></div>
+          <div class="field"><label for="to-station">To station</label><input id="to-station" list="station-options" placeholder="Station name or code"></div>
+          <button class="action-button" id="find-trains">Find trains</button>
+        </div>
+        <div class="form-row date-controls">
+          <div class="field"><label for="route-date">Journey date</label><input id="route-date" type="date"></div>
+          <button class="action-button date-preset" id="route-today" type="button">Today</button>
+          <button class="action-button date-preset" id="route-tomorrow" type="button">Tomorrow</button>
+        </div>
+        <datalist id="station-options"></datalist>
+        <p class="assumption" id="route-assumption">Timetable times come from the supplied schedule. Choose a date to view the journey timetable.</p>
+        <div class="tool-results" id="route-results"><p class="muted">Choose stations to see dataset-listed trains and endpoint times.</p></div>
+      </div>
+    </section>
+    <section class="journey-tools" data-page="station-arrivals">
+      <div class="panel">
+        <h2>Live station arrivals · next 4 hours</h2>
+        <div class="form-row">
+          <div class="field"><label for="arrival-station">Station</label><input id="arrival-station" list="station-options" placeholder="Station name or code"></div>
+          <button class="action-button" id="refresh-arrivals">Refresh arrivals</button>
+        </div>
+        <p class="assumption" id="arrival-assumption">Showing only trains with a fresh live position. From → To identifies the timetable leg into this station; expected times use live predictions only.</p>
+        <div class="table-wrap tool-results">
+          <table><thead><tr><th>Live train</th><th>From → To</th><th>Scheduled</th><th>Expected</th><th>Status</th></tr></thead><tbody id="arrival-table"></tbody></table>
+        </div>
+      </div>
+    </section>
+    <section class="layout" data-page="live-status">
+      <div id="map" class="panel" aria-label="Map showing simulated train positions"></div>
+      <div class="panel">
+        <h2>Live trains</h2>
+        <div id="train-list" class="train-list"><p class="muted">Waiting for stream data…</p></div>
+      </div>
+    </section>
+    <section class="panel selected-route-panel" data-page="live-status">
+      <h2>Selected train route</h2>
+      <div id="train-details" class="details">Select a train from the list or map to view its route and predicted next-stop arrival.</div>
+      <h3 id="route-timeline-heading" class="assumption">Select a train to see its route timeline.</h3>
+      <div id="route-timeline-wrap" class="route-timeline-wrap" hidden>
+        <div id="route-timeline" class="route-timeline"></div>
+      </div>
+      <div class="table-wrap itinerary-wrap">
+        <table><thead><tr><th>Stop</th><th>Station</th><th>Scheduled arrival</th><th>Expected arrival</th><th>Status</th></tr></thead><tbody id="itinerary-table"></tbody></table>
+      </div>
+    </section>
+    <section class="analytics" data-page="live-status">
+      <div class="panel">
+        <h2>Historical delay analytics · stations</h2>
+        <div class="table-wrap"><table><thead><tr><th>Station</th><th>Zone</th><th>Avg min</th><th>P90 min</th><th>Delayed</th><th>Samples</th></tr></thead><tbody id="station-table"></tbody></table></div>
+      </div>
+      <div class="panel">
+        <h2>Historical delay analytics · trains</h2>
+        <div class="table-wrap"><table><thead><tr><th>Train</th><th>Type</th><th>Avg min</th><th>P90 min</th><th>Delayed</th><th>Samples</th></tr></thead><tbody id="train-table"></tbody></table></div>
+      </div>
+    </section>
+    <section class="analytics-section" data-page="analytics" aria-labelledby="historical-analytics-heading">
+      <div class="analytics-heading">
+        <div>
+          <h2 id="historical-analytics-heading">Dataset Analytics</h2>
+          <p>Historical railway delay records processed by Spark and published as lakehouse gold summaries.</p>
+        </div>
+      </div>
+      <section class="metrics analytics-metrics">
+        <div class="metric"><span>Historical observations</span><strong id="analytics-observations">—</strong></div>
+        <div class="metric"><span>Weighted historic delay</span><strong id="analytics-average-delay">—</strong></div>
+        <div class="metric"><span>Historical delayed share</span><strong id="analytics-delayed-share">—</strong></div>
+        <div class="metric"><span>Stations represented</span><strong id="analytics-stations">—</strong></div>
+        <div class="metric"><span>Trains represented</span><strong id="analytics-trains">—</strong></div>
+      </section>
+      <div class="analytics-grid">
+        <div class="panel"><h2>Historical delay by railway zone</h2><p class="chart-note">Observation-weighted average delay from station-level gold summaries.</p><div id="zone-chart" class="analytics-chart"></div></div>
+        <div class="panel"><h2>Historical delay by train type</h2><p class="chart-note">Observation-weighted average delay from train-level gold summaries.</p><div id="type-chart" class="analytics-chart"></div></div>
+        <div class="panel"><h2>Highest-delay stations</h2><p class="chart-note">Top 10 station aggregates ranked by average historical delay.</p><div id="station-chart" class="analytics-chart"></div></div>
+        <div class="panel"><h2>Highest-delay trains</h2><p class="chart-note">Top 10 train aggregates ranked by average historical delay.</p><div id="train-chart" class="analytics-chart"></div></div>
+      </div>
+    </section>
+    <section class="analytics-section" data-page="analytics" aria-labelledby="current-analytics-heading">
+      <div class="analytics-heading">
+        <div>
+          <h2 id="current-analytics-heading">Current Data Analytics</h2>
+          <p>Recent Kafka position events and the active simulated train fleet. Speed, position, and delay changes are simulated—not official railway telemetry.</p>
+        </div>
+        <span class="muted" id="analytics-refresh-status">Waiting for analytics data…</span>
+      </div>
+      <section class="metrics analytics-metrics analytics-current-metrics">
+        <div class="metric"><span>Events in selected window</span><strong id="analytics-live-events">—</strong></div>
+        <div class="metric"><span>Out-of-limit legacy speed samples</span><strong id="analytics-speed-quality">—</strong></div>
+      </section>
+      <div class="analytics-toolbar">
+        <p class="chart-note">Streaming trends use 15-minute buckets; select a history window.</p>
+        <div class="field"><label for="analytics-window">Live trend window</label><select id="analytics-window"><option value="3">Last 3 hours</option><option value="6" selected>Last 6 hours</option><option value="12">Last 12 hours</option><option value="24">Last 24 hours</option></select></div>
+      </div>
+      <div class="analytics-grid">
+        <div class="panel"><h2>Recent average predicted delay</h2><p class="chart-note">15-minute buckets from simulated Kafka stream events.</p><div id="delay-trend-chart" class="analytics-chart"></div></div>
+        <div class="panel"><h2>Recent average simulated speed</h2><p class="chart-note">Samples above priority speed caps are excluded and counted in the data-quality KPI.</p><div id="speed-trend-chart" class="analytics-chart"></div></div>
+        <div class="panel"><h2>Kafka event throughput</h2><p class="chart-note">Position events processed per 15-minute bucket in the selected window.</p><div id="event-throughput-chart" class="analytics-chart"></div></div>
+        <div class="panel"><h2>Current live delay profile</h2><p class="chart-note">Distribution of the active train snapshot by predicted delay band.</p><div id="live-delay-chart" class="analytics-chart"></div></div>
+        <div class="panel"><h2>Current live fleet by priority</h2><p class="chart-note">Current snapshot; priority categories are illustrative simulator fields.</p><div id="priority-chart" class="analytics-chart"></div></div>
+      </div>
+    </section>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const pageName = window.location.pathname.slice(1);
+    const currentPage = ["journeys", "station-arrivals", "live-status", "analytics"].includes(pageName)
+      ? pageName
+      : "live-status";
+    document.body.dataset.page = currentPage;
+    document.querySelectorAll(".top-nav a").forEach((link) => {
+      if (link.pathname === `/${currentPage}`) link.setAttribute("aria-current", "page");
+    });
+    const map = L.map("map").setView([22.5, 79], 4.5);
+    const networkOnly = L.layerGroup();
+    const indiaBasemap = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: "&copy; OpenStreetMap contributors"
+    });
+    indiaBasemap.addTo(map);
+    L.control.layers({
+      "India map": indiaBasemap,
+      "Rail network (no basemap)": networkOnly
+    }, null, { collapsed: true }).addTo(map);
+    const markers = new Map();
+    let selectedTrain = null;
+    let routeGlow = null;
+    let routeLayer = null;
+    let routeStationsLayer = null;
+    let currentTrains = [];
+
+    const byId = (id) => document.getElementById(id);
+    const minutes = (value) => `${Number(value || 0).toFixed(1)} min`;
+    const displayTime = (value) => value ? new Intl.DateTimeFormat(undefined, {
+      timeZone: "Asia/Kolkata",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    }).format(new Date(value)) : "—";
+    const displayTimestamp = (value) => value ? new Intl.DateTimeFormat(undefined, {
+      timeZone: "Asia/Kolkata",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true
+    }).format(new Date(value)) : "—";
+    const indiaDate = (offsetDays = 0) => {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).formatToParts(new Date());
+      const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+      const date = new Date(Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day) + offsetDays));
+      return date.toISOString().slice(0, 10);
+    };
+    const delayColor = (delay) => Number(delay) > 60 ? "#ff5470" : Number(delay) > 15 ? "#ffbe55" : "#43e6b2";
+    const priorityName = (priority) => ({ 1: "High", 2: "Express", 3: "Standard" }[Number(priority)] || "Standard");
+    const stationCode = (value) => value.trim().split(" · ", 1)[0].toUpperCase();
+    const trainIcon = (train, selected) => L.divIcon({
+      className: "",
+      html: `<span class="train-marker${selected ? " selected" : ""}" style="background:${delayColor(train.predicted_delay_minutes)}"><span>›</span></span>`,
+      iconSize: selected ? [32, 32] : [20, 20],
+      iconAnchor: selected ? [16, 16] : [10, 10]
+    });
+
+    const legend = L.control({ position: "bottomleft" });
+    legend.onAdd = () => {
+      const element = L.DomUtil.create("div", "map-legend");
+      element.innerHTML = `
+        <strong>SIMULATED TRAIN POSITIONS</strong><br>
+        <span class="legend-dot" style="background:#43e6b2"></span>0–15 min
+        <span class="legend-dot" style="background:#ffbe55"></span>15–60 min
+        <span class="legend-dot" style="background:#ff5470"></span>&gt;60 min
+        <span class="legend-dot" style="background:#a855f7"></span>Selected train
+      `;
+      return element;
+    };
+    legend.addTo(map);
+
+    function showSelectedTrain(train, drawRoute = true, focusMap = selectedTrain !== train.train_no) {
+      selectedTrain = train.train_no;
+      document.querySelectorAll(".train-row").forEach((row) => {
+        row.classList.toggle("selected", row.dataset.train === selectedTrain);
+      });
+      for (const [trainNo, marker] of markers) {
+        const markerTrain = currentTrains.find((item) => item.train_no === trainNo);
+        if (markerTrain) {
+          const selected = trainNo === selectedTrain;
+          marker.setIcon(trainIcon(markerTrain, selected));
+          marker.setZIndexOffset(selected ? 1000 : 0);
+        }
+      }
+      const point = [Number(train.latitude), Number(train.longitude)];
+      if (focusMap && Number.isFinite(point[0]) && Number.isFinite(point[1])) {
+        map.setView(point, 12, { animate: true, duration: 0.6 });
+      }
+      const details = byId("train-details");
+      details.replaceChildren();
+      const lines = [
+        `${train.train_no} · ${train.train_name}`,
+        `Next stop: ${train.next_station_name || train.next_station_code || "Unknown"}`,
+        `ETA: ${displayTime(train.predicted_arrival)} · predicted delay: ${minutes(train.predicted_delay_minutes)}`,
+        `Simulated speed: ${Number(train.speed_kmph).toFixed(1)} km/h`,
+        `Simulated priority: ${priorityName(train.priority_level)}${train.overtaking ? " · overtaking" : ""}`,
+        `Prediction: ${train.prediction_source?.startsWith("historical_ml") ? "Historical ML" : "Baseline"}${train.prediction_source?.includes("_on_time") ? " + synthetic on-time scenario" : " + simulated delay variation"}`
+      ];
+      lines.forEach((line) => {
+        const element = document.createElement("div");
+        element.textContent = line;
+        details.append(element);
+      });
+      updateRouteTimelinePosition(train);
+      if (drawRoute) {
+        renderRouteTimelineLoading(train);
+        fetch(`/api/trains/${encodeURIComponent(train.train_no)}/route`)
+          .then((response) => response.ok ? response.json() : Promise.reject(new Error("Route unavailable")))
+          .then((route) => {
+            if (selectedTrain !== train.train_no) return;
+            renderRouteTimeline(route.stops, train);
+            renderItinerary(route.stops);
+            if (routeGlow) map.removeLayer(routeGlow);
+            if (routeLayer) map.removeLayer(routeLayer);
+            if (routeStationsLayer) map.removeLayer(routeStationsLayer);
+            const validStops = route.stops.filter((stop) => stop.latitude !== null && stop.longitude !== null);
+            const points = validStops.map((stop) => [stop.latitude, stop.longitude]);
+            if (points.length > 1) {
+              routeGlow = L.polyline(points, { color: "#071019", weight: 12, opacity: 0.95 }).addTo(map);
+              routeLayer = L.polyline(points, { color: "#20f0c0", weight: 4, opacity: 1 }).addTo(map);
+              routeStationsLayer = L.layerGroup(validStops.map((stop) =>
+                L.circleMarker([stop.latitude, stop.longitude], {
+                  radius: stop.station_code === train.next_station_code ? 7 : 4,
+                  color: stop.station_code === train.next_station_code ? "#ffbe55" : "#e9f4fa",
+                  weight: 2,
+                  fillColor: stop.station_code === train.next_station_code ? "#ffbe55" : "#15212b",
+                  fillOpacity: 1
+                }).bindTooltip(`${stop.stop_number}. ${stop.station_name || stop.station_code}`, {
+                  permanent: true,
+                  direction: "top",
+                  offset: [0, -4],
+                  className: stop.station_code === train.next_station_code ? "station-label next-stop" : "station-label"
+                })
+              )).addTo(map);
+            }
+          })
+          .catch((error) => console.error(error));
+      }
+    }
+
+    function renderRouteTimelineLoading(train) {
+      const wrapper = byId("route-timeline-wrap");
+      const timeline = byId("route-timeline");
+      const heading = byId("route-timeline-heading");
+      timeline.style.minWidth = "100%";
+      timeline.replaceChildren();
+
+      const rail = document.createElement("div");
+      rail.className = "route-timeline-line";
+      const progress = document.createElement("div");
+      progress.className = "route-timeline-progress";
+      const markerName = document.createElement("span");
+      markerName.className = "route-timeline-train-name";
+      markerName.id = "route-timeline-train-name";
+      const marker = document.createElement("span");
+      marker.className = "route-timeline-train";
+      marker.id = "route-timeline-train";
+      marker.setAttribute("role", "img");
+      marker.textContent = "›";
+      timeline.append(rail, progress, markerName, marker);
+      heading.textContent = `${train.train_no} · ${train.train_name} — loading route stations`;
+      wrapper.hidden = false;
+      updateRouteTimelinePosition(train);
+    }
+
+    function renderRouteTimeline(stops, train) {
+      const wrapper = byId("route-timeline-wrap");
+      const timeline = byId("route-timeline");
+      const heading = byId("route-timeline-heading");
+      if (!stops.length) {
+        wrapper.hidden = true;
+        heading.textContent = "No route stations are available for this train.";
+        return;
+      }
+
+      const distances = stops.map((stop) => Number(stop.distance_from_origin_km));
+      const minimumDistance = Math.min(...distances);
+      const maximumDistance = Math.max(...distances);
+      const distanceRange = maximumDistance - minimumDistance;
+      timeline.style.minWidth = `max(100%, ${Math.max(stops.length, 8) * 200}px)`;
+      timeline.replaceChildren();
+
+      const rail = document.createElement("div");
+      rail.className = "route-timeline-line";
+      const progress = document.createElement("div");
+      progress.className = "route-timeline-progress";
+      timeline.append(rail, progress);
+
+      stops.forEach((stop, index) => {
+        const distance = distances[index];
+        const position = distanceRange > 0 && Number.isFinite(distance)
+          ? 100 * (distance - minimumDistance) / distanceRange
+          : 100 * index / Math.max(1, stops.length - 1);
+        const station = document.createElement("div");
+        const status = stop.status === "Current" ? "current"
+          : stop.status === "Next stop" ? "next"
+            : stop.status === "Passed" ? "passed" : "upcoming";
+        station.className = `route-timeline-station ${status}`;
+        station.dataset.stationCode = stop.station_code;
+        station.dataset.stopNumber = stop.stop_number;
+        station.dataset.stationName = stop.station_name || stop.station_code;
+        station.dataset.routeEndpoint = index === 0 ? "start" : index === stops.length - 1 ? "end" : "";
+        station.style.left = `${5 + position * 0.9}%`;
+        station.setAttribute("aria-label", `${stop.station_name || stop.station_code}: ${stop.status}`);
+
+        const dot = document.createElement("span");
+        dot.className = "route-timeline-dot";
+        dot.title = `${stop.station_name || stop.station_code} · ${stop.station_code}`;
+        dot.setAttribute("aria-label", `${stop.station_name || stop.station_code} · ${stop.station_code}`);
+        const label = document.createElement("span");
+        label.className = `route-timeline-label ${index % 2 === 0 ? "above" : "below"}`;
+        label.textContent = timelineStationText(station, stop.status);
+        label.title = `${stop.station_name || stop.station_code} · ${stop.station_code}`;
+        label.dataset.stationLabel = label.textContent;
+        station.append(dot, label);
+        timeline.append(station);
+      });
+
+      const markerName = document.createElement("span");
+      markerName.className = "route-timeline-train-name";
+      markerName.id = "route-timeline-train-name";
+      const marker = document.createElement("span");
+      marker.className = "route-timeline-train";
+      marker.id = "route-timeline-train";
+      marker.setAttribute("role", "img");
+      marker.textContent = "›";
+      timeline.append(markerName, marker);
+      heading.textContent = `${train.train_no} · ${train.train_name} — live train location and upcoming stations`;
+      wrapper.hidden = false;
+      updateRouteTimelinePosition(train);
+    }
+
+    function updateRouteTimelinePosition(train) {
+      const marker = byId("route-timeline-train");
+      const markerName = byId("route-timeline-train-name");
+      if (!marker || !markerName || train.train_no !== selectedTrain) return;
+      const progress = Math.max(0, Math.min(100, Number(train.progress_pct) || 0));
+      const position = `${5 + progress * 0.9}%`;
+      byId("route-timeline").style.setProperty("--route-progress-position", position);
+      byId("route-timeline").style.setProperty("--route-progress-width", `${progress * 0.9}%`);
+      marker.style.left = position;
+      markerName.style.left = position;
+      const speed = Number(train.speed_kmph).toFixed(1);
+      markerName.textContent = `${train.train_no} · ${speed} km/h`;
+      const location = `${train.current_station_name || train.current_station_code} to ${train.next_station_name || train.next_station_code}`;
+      const locationDescription = `${train.train_no} location: ${location}; ${speed} km/h`;
+      markerName.title = locationDescription;
+      marker.setAttribute("aria-label", locationDescription);
+      byId("route-timeline").querySelectorAll(".route-timeline-station").forEach((station) => {
+        const code = station.dataset.stationCode;
+        const stopNumber = Number(station.dataset.stopNumber);
+        const status = code === train.current_station_code ? "Current"
+          : code === train.next_station_code ? "Next stop"
+            : stopNumber < Number(train.route_index) ? "Passed" : "Upcoming";
+        station.classList.remove("current", "next", "passed", "upcoming");
+        station.classList.add(status.toLowerCase().replace(" ", "-"));
+        station.querySelector(".route-timeline-label").textContent = timelineStationText(station, status);
+      });
+      byId("itinerary-table").querySelectorAll("tr").forEach((row) => {
+        const code = row.dataset.stationCode;
+        const stopNumber = Number(row.dataset.stopNumber);
+        const status = code === train.current_station_code ? "Current"
+          : code === train.next_station_code ? "Next stop"
+            : stopNumber < Number(train.route_index) ? "Passed" : "Upcoming";
+        row.classList.toggle("current-stop", status === "Current");
+        row.classList.toggle("next-stop", status === "Next stop");
+        const statusCell = row.lastElementChild;
+        if (statusCell) statusCell.textContent = status;
+      });
+    }
+
+    function timelineStationText(station, status) {
+      const code = station.dataset.stationCode;
+      const name = station.dataset.stationName;
+      const endpoint = station.dataset.routeEndpoint;
+      if (status === "Next stop") return `NEXT · ${name} · ${code}`;
+      if (endpoint) {
+        const prefix = endpoint === "start" ? "Start · " : "End · ";
+        return `${prefix}${name} · ${code}`;
+      }
+      return `${name} · ${code}`;
+    }
+
+    function renderItinerary(stops) {
+      const body = byId("itinerary-table");
+      body.replaceChildren();
+      stops.forEach((stop) => {
+        const row = document.createElement("tr");
+        row.dataset.stationCode = stop.station_code;
+        row.dataset.stopNumber = stop.stop_number;
+        if (stop.status === "Current") row.classList.add("current-stop");
+        if (stop.status === "Next stop") row.classList.add("next-stop");
+        [
+          stop.stop_number,
+          `${stop.station_name || stop.station_code} · ${stop.station_code}`,
+          displayTime(stop.scheduled_arrival),
+          displayTime(stop.expected_arrival),
+          stop.status
+        ].forEach((value) => {
+          const cell = document.createElement("td");
+          cell.textContent = value ?? "—";
+          row.append(cell);
+        });
+        body.append(row);
+      });
+    }
+
+    async function loadStations(query) {
+      if (!query || query.trim().length < 2) return;
+      const response = await fetch(`/api/stations?q=${encodeURIComponent(query.trim())}&limit=100`);
+      if (!response.ok) throw new Error("Could not load the station catalog");
+      const stations = await response.json();
+      const options = byId("station-options");
+      options.replaceChildren();
+      stations.forEach((station) => {
+        const option = document.createElement("option");
+        option.value = `${station.station_code} · ${station.station_name}`;
+        options.append(option);
+      });
+    }
+
+    async function findTrainsBetweenStations() {
+      const fromStation = stationCode(byId("from-station").value);
+      const toStation = stationCode(byId("to-station").value);
+      const results = byId("route-results");
+      if (!fromStation || !toStation) {
+        results.textContent = "Select both stations to find scheduled trains.";
+        return;
+      }
+      results.textContent = "Searching the route timetable…";
+      try {
+        const params = new URLSearchParams({
+          from_station: fromStation,
+          to_station: toStation,
+          service_day: byId("route-date").value || indiaDate()
+        });
+        const response = await fetch(`/api/trains/between?${params}`);
+        if (!response.ok) throw new Error("Could not search the route timetable");
+        const data = await response.json();
+        byId("route-assumption").textContent = `Journey date: ${data.service_day}. ${data.service_day_assumption}`;
+        results.replaceChildren();
+        if (!data.trains.length) {
+          results.textContent = "No scheduled train is listed between these stations in the supplied route catalog.";
+          return;
+        }
+        data.trains.forEach((train) => {
+          const article = document.createElement("article");
+          article.className = "route-result";
+          const heading = document.createElement("h3");
+          heading.textContent = `${train.train_no} · ${train.train_name} · ${train.type_code || "Train"}`;
+          article.append(heading);
+          const [origin, destination] = train.stops;
+          if (!origin || !destination) return;
+          const endpoints = document.createElement("div");
+          endpoints.className = "journey-endpoints";
+          [
+            {
+              label: "From",
+              stop: origin,
+              timeLabel: "Departure",
+              time: origin.scheduled_departure
+            },
+            {
+              label: "To",
+              stop: destination,
+              timeLabel: "Arrival",
+              time: destination.scheduled_arrival
+            }
+          ].forEach((endpoint, index) => {
+            if (index === 1) {
+              const arrow = document.createElement("span");
+              arrow.className = "journey-arrow";
+              arrow.setAttribute("aria-hidden", "true");
+              arrow.textContent = "→";
+              endpoints.append(arrow);
+            }
+            const details = document.createElement("div");
+            details.className = "journey-endpoint";
+            const label = document.createElement("span");
+            label.textContent = endpoint.label;
+            const station = document.createElement("strong");
+            station.textContent = endpoint.stop.station_name || endpoint.stop.station_code;
+            const time = document.createElement("span");
+            time.textContent = `${endpoint.stop.station_code} · ${endpoint.timeLabel}: ${displayTime(endpoint.time)}`;
+            details.append(label, station, time);
+            endpoints.append(details);
+          });
+          article.append(endpoints);
+          results.append(article);
+        });
+      } catch (error) {
+        results.textContent = error.message;
+        console.error(error);
+      }
+    }
+
+    async function loadStationArrivals() {
+      const selectedStation = stationCode(byId("arrival-station").value);
+      const body = byId("arrival-table");
+      if (!byId("arrival-station").value.trim()) {
+        body.replaceChildren();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/stations/${encodeURIComponent(selectedStation)}/arrivals?limit=1000`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Could not load station arrivals");
+        const data = await response.json();
+        byId("arrival-assumption").textContent =
+          `Live trains only · next four hours · ${displayTime(data.window_start)}–${displayTime(data.window_end)}. Expected times use live predictions; no historical average is applied. ${data.service_day_assumption}`;
+        body.replaceChildren();
+        if (!data.arrivals.length) {
+          const row = document.createElement("tr");
+          const cell = document.createElement("td");
+          cell.colSpan = 5;
+          cell.textContent = `No live trains are currently predicted to arrive at ${selectedStation} within the next four hours.`;
+          row.append(cell);
+          body.append(row);
+          return;
+        }
+        data.arrivals.forEach((arrival) => {
+          const row = document.createElement("tr");
+          const values = [
+            `${arrival.train_no} · ${arrival.train_name}`,
+            `${arrival.previous_station_name || "Origin"} → ${arrival.station_name || selectedStation}`,
+            displayTime(arrival.scheduled_arrival),
+            displayTime(arrival.expected_arrival),
+            `Live · ${minutes(arrival.predicted_delay_minutes)}`
+          ];
+          values.forEach((value) => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            row.append(cell);
+          });
+          body.append(row);
+        });
+      } catch (error) {
+        body.replaceChildren();
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 5;
+        cell.textContent = error.message;
+        row.append(cell);
+        body.append(row);
+        console.error(error);
+      }
+    }
+
+    function renderTrains(trains) {
+      currentTrains = trains;
+      const list = byId("train-list");
+      list.replaceChildren();
+      trains.forEach((train) => {
+        const button = document.createElement("button");
+        button.className = "train-row";
+        button.dataset.train = train.train_no;
+        const title = document.createElement("strong");
+        title.textContent = `${train.train_no} · ${train.train_name}`;
+        const subtitle = document.createElement("span");
+        const passing = train.overtaking ? " · OVERTAKING" : "";
+        subtitle.textContent = `${train.current_station_code || "—"} → ${train.next_station_code || "—"} · ${Number(train.speed_kmph).toFixed(1)} km/h simulated · ${minutes(train.predicted_delay_minutes)} · ${priorityName(train.priority_level)} priority${passing}`;
+        button.append(title, document.createElement("br"), subtitle);
+        button.addEventListener("click", () => showSelectedTrain(train));
+        list.append(button);
+
+        const point = [train.latitude, train.longitude];
+        const label = `${train.train_no} · ${train.train_name} → ${train.next_station_name || train.next_station_code}`;
+        let marker = markers.get(train.train_no);
+        if (marker) {
+          marker.setLatLng(point);
+          marker.setIcon(trainIcon(train, train.train_no === selectedTrain));
+        } else {
+          marker = L.marker(point, {
+            icon: trainIcon(train, train.train_no === selectedTrain),
+            title: label,
+            zIndexOffset: train.train_no === selectedTrain ? 1000 : 0
+          }).addTo(map);
+          markers.set(train.train_no, marker);
+          marker.on("click", () => {
+            const latest = currentTrains.find((item) => item.train_no === train.train_no);
+            if (latest) showSelectedTrain(latest);
+          });
+        }
+        marker.setZIndexOffset(train.train_no === selectedTrain ? 1000 : 0);
+        marker.bindTooltip(label);
+      });
+      for (const [trainNo, marker] of markers) {
+        if (!trains.some((train) => train.train_no === trainNo)) {
+          map.removeLayer(marker);
+          markers.delete(trainNo);
+        }
+      }
+      if (selectedTrain) {
+        const current = trains.find((train) => train.train_no === selectedTrain);
+        if (current) {
+          showSelectedTrain(current, false, false);
+          updateRouteTimelinePosition(current);
+        }
+      }
+    }
+
+    function fillTable(elementId, rows, trainRows) {
+      const body = byId(elementId);
+      body.replaceChildren();
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const values = trainRows
+          ? [row.train_no + " · " + row.train_name, row.type_code || "—", minutes(row.average_delay_minutes), minutes(row.p90_delay_minutes), `${(100 * Number(row.delayed_fraction || 0)).toFixed(1)}%`, row.observation_count]
+          : [row.station_code + " · " + row.station_name, row.zone || "—", minutes(row.average_delay_minutes), minutes(row.p90_delay_minutes), `${(100 * Number(row.delayed_fraction || 0)).toFixed(1)}%`, row.observation_count];
+        values.forEach((value) => {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          tr.append(cell);
+        });
+        body.append(tr);
+      });
+    }
+
+    const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+
+    function renderEmptyChart(elementId, message) {
+      const container = byId(elementId);
+      container.replaceChildren();
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = message;
+      container.append(note);
+    }
+
+    function createChartSvg(container, width, height, label) {
+      container.replaceChildren();
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", label);
+      container.append(svg);
+      return svg;
+    }
+
+    function svgElement(tag, attributes = {}, text = "") {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(attributes).forEach(([name, value]) => element.setAttribute(name, value));
+      if (text) element.textContent = text;
+      return element;
+    }
+
+    function renderBarChart(elementId, rows, labelFor, valueFor, formatValue, color) {
+      if (!rows.length) {
+        renderEmptyChart(elementId, "No historical aggregate data is available yet.");
+        return;
+      }
+      const width = 780;
+      const rowHeight = 34;
+      const height = Math.max(180, rows.length * rowHeight + 28);
+      const left = 230;
+      const plotWidth = 490;
+      const values = rows.map((row) => Number(valueFor(row))).filter(Number.isFinite);
+      const minValue = Math.min(0, ...values);
+      const maxValue = Math.max(0, ...values);
+      const span = maxValue - minValue || 1;
+      const zeroX = left + (0 - minValue) / span * plotWidth;
+      const svg = createChartSvg(byId(elementId), width, height, "Historical delay horizontal bar chart");
+
+      for (let tick = 0; tick <= 4; tick += 1) {
+        const value = minValue + span * tick / 4;
+        const x = left + plotWidth * tick / 4;
+        svg.append(
+          svgElement("line", { x1: x, y1: 18, x2: x, y2: height - 8, class: "chart-grid" }),
+          svgElement("text", { x, y: 13, "text-anchor": "middle", class: "chart-label" }, formatValue(value))
+        );
+      }
+      svg.append(svgElement("line", {
+        x1: zeroX, y1: 18, x2: zeroX, y2: height - 8, class: "chart-axis"
+      }));
+      rows.forEach((row, index) => {
+        const value = Number(valueFor(row));
+        if (!Number.isFinite(value)) return;
+        const y = 31 + index * rowHeight;
+        const endX = left + (value - minValue) / span * plotWidth;
+        const label = String(labelFor(row));
+        svg.append(
+          svgElement("text", { x: left - 12, y: y + 13, "text-anchor": "end", class: "chart-label" },
+            label.length > 32 ? `${label.slice(0, 29)}…` : label),
+          svgElement("rect", {
+            x: Math.min(zeroX, endX), y, width: Math.max(1, Math.abs(endX - zeroX)), height: 20,
+            rx: 4, fill: color, opacity: 0.82
+          }),
+          svgElement("text", {
+            x: Math.min(width - 6, Math.max(left + 8, endX + (value >= 0 ? 8 : -8))),
+            y: y + 14,
+            "text-anchor": value >= 0 ? "start" : "end",
+            class: "chart-value"
+          }, formatValue(value))
+        );
+      });
+    }
+
+    function renderLineChart(elementId, rows, valueKey, color, label) {
+      if (!rows.length) {
+        renderEmptyChart(elementId, "No recent stream events in this time window.");
+        return;
+      }
+      const width = 780;
+      const height = 220;
+      const left = 58;
+      const right = 18;
+      const top = 18;
+      const bottom = 38;
+      const plotWidth = width - left - right;
+      const plotHeight = height - top - bottom;
+      const values = rows.map((row) => Number(row[valueKey])).filter(Number.isFinite);
+      if (!values.length) {
+        renderEmptyChart(elementId, "No valid values are available for this time window.");
+        return;
+      }
+      const minValue = Math.min(0, ...values);
+      const maxValue = Math.max(...values);
+      const span = maxValue - minValue || 1;
+      const points = rows.map((row, index) => {
+        const value = Number(row[valueKey]);
+        return {
+          row,
+          value,
+          x: left + (rows.length === 1 ? 0.5 : index / (rows.length - 1)) * plotWidth,
+          y: top + (maxValue - value) / span * plotHeight
+        };
+      }).filter((point) => Number.isFinite(point.value));
+      const svg = createChartSvg(byId(elementId), width, height, label);
+      for (let tick = 0; tick <= 4; tick += 1) {
+        const value = minValue + span * tick / 4;
+        const y = top + plotHeight * (1 - tick / 4);
+        svg.append(
+          svgElement("line", { x1: left, y1: y, x2: width - right, y2: y, class: "chart-grid" }),
+          svgElement("text", { x: left - 8, y: y + 4, "text-anchor": "end", class: "chart-label" },
+            value.toFixed(0))
+        );
+      }
+      const path = points.map((point) => `${point.x},${point.y}`).join(" ");
+      svg.append(svgElement("polyline", {
+        points: path, fill: "none", stroke: color, "stroke-width": 3,
+        "stroke-linecap": "round", "stroke-linejoin": "round"
+      }));
+      points.forEach((point) => {
+        const date = new Date(point.row.time_bucket);
+        const timeLabel = displayTimestamp(point.row.time_bucket);
+        const circle = svgElement("circle", {
+          cx: point.x, cy: point.y, r: 4, fill: color, stroke: "#15212b", "stroke-width": 2
+        });
+        const pointLabel = valueKey === "event_count"
+          ? numberFormat.format(point.value)
+          : point.value.toFixed(1);
+        circle.append(svgElement("title", {}, `${timeLabel}: ${pointLabel}`));
+        svg.append(circle);
+        if (point === points[0] || point === points[points.length - 1]) {
+          const timeLabel = new Intl.DateTimeFormat(undefined, {
+            timeZone: "Asia/Kolkata",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false
+          }).format(date);
+          svg.append(svgElement("text", {
+            x: point.x, y: height - 10,
+            "text-anchor": point === points[0] ? "start" : "end",
+            class: "chart-label"
+          }, timeLabel));
+        }
+      });
+    }
+
+    function renderAdvancedAnalytics(data) {
+      const overview = data.overview;
+      byId("analytics-observations").textContent = numberFormat.format(overview.historical_observations);
+      byId("analytics-average-delay").textContent = `${Number(overview.weighted_average_delay_minutes).toFixed(1)} min`;
+      byId("analytics-delayed-share").textContent = `${(100 * Number(overview.weighted_delayed_fraction)).toFixed(1)}%`;
+      byId("analytics-stations").textContent = numberFormat.format(overview.stations_with_history);
+      byId("analytics-trains").textContent = numberFormat.format(overview.trains_with_history);
+
+      renderBarChart(
+        "zone-chart", data.zones, (row) => `${row.zone} · ${row.station_count} stations`,
+        (row) => row.average_delay_minutes, (value) => `${value.toFixed(1)} min`, "#e8795f"
+      );
+      renderBarChart(
+        "type-chart", data.types, (row) => `${row.type_code} · ${row.train_count} trains`,
+        (row) => row.average_delay_minutes, (value) => `${value.toFixed(1)} min`, "#7d91ff"
+      );
+      renderBarChart(
+        "station-chart", data.stations, (row) => `${row.station_code} · ${row.station_name}`,
+        (row) => row.average_delay_minutes, (value) => `${value.toFixed(1)} min`, "#e8795f"
+      );
+      renderBarChart(
+        "train-chart", data.trains,
+        (row) => `${row.train_no} · ${row.train_name}`,
+        (row) => row.average_delay_minutes, (value) => `${value.toFixed(1)} min`, "#7d91ff"
+      );
+      renderLineChart("delay-trend-chart", data.trends, "average_delay_minutes", "#ffbe55",
+        "Average predicted delay by 15-minute stream bucket");
+      renderLineChart("speed-trend-chart", data.trends, "average_speed_kmph", "#20f0c0",
+        "Average simulated speed by 15-minute stream bucket");
+      renderLineChart("event-throughput-chart", data.trends, "event_count", "#7d91ff",
+        "Kafka position events per 15-minute stream bucket");
+      byId("analytics-live-events").textContent = numberFormat.format(
+        data.trends.reduce((total, row) => total + Number(row.event_count || 0), 0)
+      );
+      byId("analytics-speed-quality").textContent = numberFormat.format(
+        data.trends.reduce((total, row) => total + Number(row.out_of_limit_speed_samples || 0), 0)
+      );
+      byId("analytics-refresh-status").textContent =
+        `Stream window: ${data.hours} hours · refreshed ${displayTimestamp(new Date().toISOString())}`;
+    }
+
+    function renderLiveAnalytics(trains) {
+      const delayBands = [
+        { label: "Early (<0 min)", count: 0 },
+        { label: "On time (0–15 min)", count: 0 },
+        { label: "Delayed (15–60 min)", count: 0 },
+        { label: "Severely delayed (>60 min)", count: 0 }
+      ];
+      const priorities = [
+        { label: "High priority", count: 0 },
+        { label: "Standard", count: 0 }
+      ];
+      trains.forEach((train) => {
+        const delay = Number(train.predicted_delay_minutes);
+        if (delay < 0) delayBands[0].count += 1;
+        else if (delay <= 15) delayBands[1].count += 1;
+        else if (delay <= 60) delayBands[2].count += 1;
+        else delayBands[3].count += 1;
+        if (Number(train.priority_level) === 1) priorities[0].count += 1;
+        else priorities[1].count += 1;
+      });
+      renderBarChart(
+        "live-delay-chart", delayBands, (row) => `${row.label} · ${row.count}`,
+        (row) => row.count, (value) => `${value.toFixed(0)} trains`, "#ffbe55"
+      );
+      renderBarChart(
+        "priority-chart", priorities, (row) => `${row.label} · ${row.count}`,
+        (row) => row.count, (value) => `${value.toFixed(0)} trains`, "#a855f7"
+      );
+    }
+
+    async function refreshAdvancedAnalytics() {
+      try {
+        const hours = Number(byId("analytics-window").value);
+        const endpoints = [
+          "/api/analytics/overview",
+          "/api/analytics/zones?limit=20",
+          "/api/analytics/types",
+          "/api/analytics/stations?limit=10",
+          "/api/analytics/trains?limit=10",
+          `/api/analytics/live-trends?hours=${hours}`
+        ];
+        const responses = await Promise.all(endpoints.map((url) => fetch(url, { cache: "no-store" })));
+        if (responses.some((response) => !response.ok)) {
+          throw new Error("An advanced analytics API request failed");
+        }
+        const [overview, zones, types, stations, trains, trends] =
+          await Promise.all(responses.map((response) => response.json()));
+        renderAdvancedAnalytics({ overview, zones, types, stations, trains, trends, hours });
+      } catch (error) {
+        byId("analytics-refresh-status").textContent = "Analytics refresh failed — check API and database services";
+        console.error(error);
+      }
+    }
+
+    async function refreshAdvancedLive() {
+      try {
+        const response = await fetch("/api/trains?limit=1000", { cache: "no-store" });
+        if (!response.ok) throw new Error("Live train analytics request failed");
+        renderLiveAnalytics(await response.json());
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function refresh() {
+      try {
+        const [statsResponse, trainsResponse, stationsResponse, trainAnalyticsResponse] = await Promise.all([
+          fetch("/api/stats", { cache: "no-store" }),
+          fetch("/api/trains", { cache: "no-store" }),
+          fetch("/api/analytics/stations?limit=30", { cache: "no-store" }),
+          fetch("/api/analytics/trains?limit=30", { cache: "no-store" })
+        ]);
+        if (![statsResponse, trainsResponse, stationsResponse, trainAnalyticsResponse].every((response) => response.ok)) {
+          throw new Error("A dashboard API request failed");
+        }
+        const [stats, trains, stations, trainAnalytics] = await Promise.all([
+          statsResponse.json(), trainsResponse.json(), stationsResponse.json(), trainAnalyticsResponse.json()
+        ]);
+        byId("active-count").textContent = stats.active_trains;
+        byId("mean-delay").textContent = minutes(stats.average_predicted_delay_minutes);
+        byId("ml-count").textContent = stats.ml_predictions;
+        byId("delayed-count").textContent = stats.delayed_trains;
+        byId("on-time-count").textContent = stats.on_time_or_early_trains;
+        byId("last-update").textContent = displayTimestamp(stats.latest_update);
+        byId("status").textContent = "Live data · positions refresh every 2 seconds";
+        renderTrains(trains);
+      } catch (error) {
+        byId("status").textContent = "API unavailable — check services";
+        console.error(error);
+      }
+    }
+
+    async function refreshAnalytics() {
+      try {
+        const [stationsResponse, trainAnalyticsResponse] = await Promise.all([
+          fetch("/api/analytics/stations?limit=30", { cache: "no-store" }),
+          fetch("/api/analytics/trains?limit=30", { cache: "no-store" })
+        ]);
+        if (!stationsResponse.ok || !trainAnalyticsResponse.ok) {
+          throw new Error("A dashboard analytics request failed");
+        }
+        const [stations, trainAnalytics] = await Promise.all([
+          stationsResponse.json(), trainAnalyticsResponse.json()
+        ]);
+        fillTable("station-table", stations, false);
+        fillTable("train-table", trainAnalytics, true);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    byId("route-date").value = indiaDate();
+    if (currentPage === "live-status") {
+      refresh();
+      refreshAnalytics();
+      setInterval(refresh, 2000);
+      setInterval(refreshAnalytics, 30000);
+    } else if (currentPage === "analytics") {
+      refreshAdvancedAnalytics();
+      refreshAdvancedLive();
+      setInterval(refreshAdvancedAnalytics, 60000);
+      setInterval(refreshAdvancedLive, 15000);
+    } else {
+      byId("status").textContent = "Timetable and station tools";
+    }
+    if (currentPage === "analytics") {
+      byId("status").textContent = "Historical batch + simulated streaming analytics";
+      byId("analytics-window").addEventListener("change", refreshAdvancedAnalytics);
+    }
+    byId("find-trains").addEventListener("click", findTrainsBetweenStations);
+    function setJourneyDate(offsetDays) {
+      byId("route-date").value = indiaDate(offsetDays);
+      if (byId("from-station").value.trim() && byId("to-station").value.trim()) {
+        findTrainsBetweenStations();
+      }
+    }
+    byId("route-today").addEventListener("click", () => setJourneyDate(0));
+    byId("route-tomorrow").addEventListener("click", () => setJourneyDate(1));
+    let stationSearchTimeout = null;
+    ["from-station", "to-station", "arrival-station"].forEach((id) => {
+      byId(id).addEventListener("input", () => {
+        clearTimeout(stationSearchTimeout);
+        stationSearchTimeout = setTimeout(() => {
+          loadStations(byId(id).value).catch((error) => console.error(error));
+          if (id === "arrival-station") loadStationArrivals();
+        }, 250);
+      });
+    });
+    byId("arrival-station").addEventListener("change", loadStationArrivals);
+    byId("refresh-arrivals").addEventListener("click", loadStationArrivals);
+    if (currentPage === "station-arrivals") {
+      setInterval(loadStationArrivals, 30000);
+    }
+  </script>
+</body>
+</html>
