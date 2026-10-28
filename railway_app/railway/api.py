@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 
-from railway.config import DATABASE_URL
+from railway.config import DATABASE_URL, SIMULATION_SPEED
 
 app = FastAPI(title="Railway Live Analytics API", version="1.0.0")
 INDEX_FILE = Path(__file__).resolve().parent.parent / "static" / "index.html"
@@ -53,6 +53,25 @@ def scheduled_stop_datetime(stop, field, service_date):
         stop_time,
         tzinfo=INDIA_TZ,
     )
+
+
+def simulated_station_arrival(stop, first_stop, service_date, speed_multiplier):
+    if speed_multiplier <= 0:
+        raise ValueError("SIMULATION_SPEED must be positive")
+    station_arrival = scheduled_stop_datetime(stop, "arrival", service_date)
+    trip_start = (
+        scheduled_stop_datetime(first_stop, "departure", service_date)
+        or scheduled_stop_datetime(first_stop, "arrival", service_date)
+    )
+    if station_arrival is None or trip_start is None or station_arrival < trip_start:
+        return None
+    return trip_start + (station_arrival - trip_start) / speed_multiplier
+
+
+def expected_time_with_delay(scheduled_time, delay_minutes):
+    if scheduled_time is None or delay_minutes is None:
+        return None
+    return scheduled_time + timedelta(minutes=float(delay_minutes))
 
 
 @app.get("/", include_in_schema=False)
@@ -267,12 +286,9 @@ def station_arrivals(
         SELECT arrivals.train_no, arrivals.train_name, arrivals.type_code,
                arrivals.stop_number, arrivals.station_code, arrivals.station_name,
                arrivals.previous_station_code, arrivals.previous_station_name,
-               arrivals.scheduled_arrival, p.predicted_arrival AS live_next_stop_arrival,
-               CASE
-                   WHEN p.next_station_code = arrivals.station_code THEN p.predicted_arrival
-                   ELSE arrivals.scheduled_arrival
-                       + p.predicted_delay_minutes * INTERVAL '1 minute'
-               END AS expected_arrival,
+               arrivals.scheduled_arrival,
+               arrivals.scheduled_arrival
+                   + p.predicted_delay_minutes * INTERVAL '1 minute' AS expected_arrival,
                p.predicted_delay_minutes, p.prediction_source,
                p.priority_level,
                p.overtaking, TRUE AS live
@@ -328,7 +344,7 @@ def train_route(train_no: str):
         else datetime.now(INDIA_TZ).date()
     )
     predicted_delay = (
-        max(0.0, float(current_position["predicted_delay_minutes"]))
+        float(current_position["predicted_delay_minutes"])
         if current_position
         else 0.0
     )
@@ -336,18 +352,17 @@ def train_route(train_no: str):
         scheduled_arrival = scheduled_stop_datetime(stop, "arrival", service_date)
         scheduled_departure = scheduled_stop_datetime(stop, "departure", service_date)
         stop["scheduled_arrival"] = scheduled_arrival
-        stop["expected_arrival"] = (
-            current_position["predicted_arrival"]
-            if current_position and stop["station_code"] == current_position["next_station_code"]
-            else scheduled_arrival + timedelta(minutes=predicted_delay)
-            if scheduled_arrival
-            else None
+        stop["expected_arrival"] = expected_time_with_delay(
+            scheduled_arrival, predicted_delay
         )
         stop["scheduled_departure"] = scheduled_departure
         stop["expected_departure"] = (
             scheduled_departure + timedelta(minutes=predicted_delay)
             if scheduled_departure
             else None
+        )
+        stop["simulated_actual_arrival"] = simulated_station_arrival(
+            stop, route_rows[0], service_date, SIMULATION_SPEED
         )
         if current_position and stop["station_code"] == current_position["current_station_code"]:
             stop["status"] = "Current"
@@ -368,60 +383,23 @@ def train_route(train_no: str):
     }
 
 
-@app.get("/api/analytics/stations")
-def station_analytics(limit: int = Query(default=100, ge=1, le=1000)):
-    return query_rows(
-        """
-        SELECT station_code, station_name, zone, observation_count,
-               average_delay_minutes, p90_delay_minutes, delayed_fraction
-        FROM station_delay_analytics
-        ORDER BY average_delay_minutes DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
-
-
-@app.get("/api/analytics/trains")
-def train_analytics(limit: int = Query(default=100, ge=1, le=1000)):
-    return query_rows(
-        """
-        SELECT train_no, train_name, type_code, observation_count,
-               average_delay_minutes, p90_delay_minutes, delayed_fraction
-        FROM train_delay_analytics
-        ORDER BY average_delay_minutes DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
-
-
 @app.get("/api/analytics/overview")
 def analytics_overview():
     rows = query_rows(
         """
-        WITH train_summary AS (
-            SELECT
-                COUNT(*) AS trains_with_history,
-                COALESCE(SUM(observation_count), 0) AS historical_observations,
-                COALESCE(
-                    SUM(average_delay_minutes * observation_count)
-                    / NULLIF(SUM(observation_count), 0),
-                    0
-                ) AS weighted_average_delay_minutes,
-                COALESCE(
-                    SUM(delayed_fraction * observation_count)
-                    / NULLIF(SUM(observation_count), 0),
-                    0
-                ) AS weighted_delayed_fraction
-            FROM train_delay_analytics
-        ),
-        station_summary AS (
-            SELECT COUNT(*) AS stations_with_history
-            FROM station_delay_analytics
-        )
-        SELECT train_summary.*, station_summary.stations_with_history
-        FROM train_summary CROSS JOIN station_summary
+        SELECT
+            COALESCE(SUM(observation_count), 0) AS historical_observations,
+            COALESCE(
+                SUM(average_delay_minutes * observation_count)
+                / NULLIF(SUM(observation_count), 0),
+                0
+            ) AS weighted_average_delay_minutes,
+            COALESCE(
+                SUM(delayed_fraction * observation_count)
+                / NULLIF(SUM(observation_count), 0),
+                0
+            ) AS weighted_delayed_fraction
+        FROM train_delay_analytics
         """
     )
     return rows[0]

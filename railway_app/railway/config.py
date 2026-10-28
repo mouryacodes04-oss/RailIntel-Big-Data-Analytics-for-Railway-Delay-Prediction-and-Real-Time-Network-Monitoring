@@ -8,3 +8,4 @@ DATABASE_URL = os.getenv(
 )
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "train_positions")
+SIMULATION_SPEED = float(os.getenv("SIMULATION_SPEED", "4"))

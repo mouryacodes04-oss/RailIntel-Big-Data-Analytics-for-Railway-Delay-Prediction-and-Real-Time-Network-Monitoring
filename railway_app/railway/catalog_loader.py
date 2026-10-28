@@ -24,10 +24,21 @@ def load_catalog(dataset_root):
     network_dir = os.path.join(dataset_root, "Railway_Network")
     delay_dir = os.path.join(dataset_root, "Railway_delays")
 
+    full_station_names = {}
+    full_names_path = os.path.join(delay_dir, "station_full_names.csv")
+    if os.path.exists(full_names_path):
+        with open(full_names_path, newline="", encoding="utf-8") as stream:
+            for row in csv.DictReader(stream):
+                code = (row.get("station_name") or "").strip()
+                name = (row.get("station_full_name") or "").strip()
+                if code and name:
+                    full_station_names[code] = name
+
     with open(os.path.join(network_dir, "stations.json"), encoding="utf-8") as stream:
         station_features = json.load(stream)["features"]
 
     stations = []
+    station_codes = set()
     for feature in station_features:
         properties = feature.get("properties") or {}
         geometry = feature.get("geometry") or {}
@@ -36,15 +47,22 @@ def load_catalog(dataset_root):
         code = properties.get("code")
         if not code:
             continue
+        code = code.strip()
+        station_codes.add(code)
         stations.append((
-            code.strip(),
-            properties.get("name") or code.strip(),
+            code,
+            full_station_names.get(code) or properties.get("name") or code,
             properties.get("state"),
             properties.get("zone"),
             properties.get("address"),
             latitude,
             longitude,
         ))
+    stations.extend(
+        (code, name, None, None, None, None, None)
+        for code, name in full_station_names.items()
+        if code not in station_codes
+    )
 
     train_details = {}
     with open(os.path.join(delay_dir, "train_details.csv"), newline="", encoding="utf-8") as stream:

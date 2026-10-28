@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from kafka import KafkaProducer
 
 from railway.catalog_loader import load_catalog
-from railway.config import DATASET_ROOT, KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC
+from railway.config import DATASET_ROOT, KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC, SIMULATION_SPEED
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -325,7 +325,7 @@ def run():
     interval_seconds = float(os.getenv("EVENT_INTERVAL_SECONDS", "2"))
     if interval_seconds <= 0:
         raise ValueError("EVENT_INTERVAL_SECONDS must be positive")
-    simulation_speed = float(os.getenv("SIMULATION_SPEED", "4"))
+    simulation_speed = SIMULATION_SPEED
     if simulation_speed <= 0:
         raise ValueError("SIMULATION_SPEED must be positive")
     random_generator = random.Random(42)

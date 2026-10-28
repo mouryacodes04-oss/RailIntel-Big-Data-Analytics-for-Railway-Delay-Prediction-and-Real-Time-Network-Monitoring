@@ -3,12 +3,13 @@ import json
 import random
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from railway.catalog_loader import canonical_train_number, load_catalog
+from railway.api import expected_time_with_delay, simulated_station_arrival
 from railway.simulator import (
     build_routes,
     position_event,
@@ -99,6 +100,33 @@ class RailwayPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(event["distance_to_next_km"], 5)
         self.assertAlmostEqual(event["progress_pct"], 25)
 
+    def test_catalog_prefers_full_station_names_and_adds_missing_named_stations(self):
+        names_path = self.root / "Railway_delays" / "station_full_names.csv"
+        with names_path.open("w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(
+                stream,
+                fieldnames=["station_name", "station_full_name", "station_zone", "station_address"],
+            )
+            writer.writeheader()
+            writer.writerow({
+                "station_name": "AAA",
+                "station_full_name": "ALPHA CENTRAL JUNCTION",
+                "station_zone": "TZ",
+                "station_address": "",
+            })
+            writer.writerow({
+                "station_name": "DDD",
+                "station_full_name": "DELTA CITY JUNCTION",
+                "station_zone": "TZ",
+                "station_address": "",
+            })
+
+        stations, _, _ = load_catalog(str(self.root))
+        station_by_code = {station[0]: station for station in stations}
+        self.assertEqual(station_by_code["AAA"][1], "ALPHA CENTRAL JUNCTION")
+        self.assertEqual(station_by_code["DDD"][1], "DELTA CITY JUNCTION")
+        self.assertIsNone(station_by_code["DDD"][5])
+
     def test_scheduled_route_state_uses_timetable_and_service_day(self):
         route = build_routes(str(self.root))[0]
         current_time = datetime(2026, 1, 2, 8, 15, tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -143,6 +171,44 @@ class RailwayPipelineTests(unittest.TestCase):
         self.assertGreater(max(speeds) - min(speeds), 40)
         self.assertTrue(any(later > earlier for earlier, later in zip(speeds, speeds[1:])))
         self.assertTrue(any(later < earlier for earlier, later in zip(speeds, speeds[1:])))
+
+    def test_simulated_station_arrival_maps_timetable_to_playback_clock(self):
+        service_date = date(2026, 1, 2)
+        first_stop = {
+            "departure_day": 1,
+            "departure_time": "08:00:00",
+        }
+        current_stop = {
+            "arrival_day": 1,
+            "arrival_time": "09:00:00",
+        }
+        arrival = simulated_station_arrival(
+            current_stop, first_stop, service_date, speed_multiplier=4
+        )
+        self.assertEqual(
+            arrival,
+            datetime(2026, 1, 2, 8, 15, tzinfo=ZoneInfo("Asia/Kolkata")),
+        )
+        self.assertIsNone(
+            simulated_station_arrival(
+                {"departure_day": 1, "departure_time": "09:00:00"},
+                first_stop,
+                service_date,
+                speed_multiplier=4,
+            )
+        )
+
+    def test_expected_time_adds_signed_delay_to_scheduled_timestamp(self):
+        scheduled = datetime(2026, 10, 29, 3, 35, tzinfo=ZoneInfo("Asia/Kolkata"))
+        self.assertEqual(
+            expected_time_with_delay(scheduled, 11),
+            datetime(2026, 10, 29, 3, 46, tzinfo=ZoneInfo("Asia/Kolkata")),
+        )
+        self.assertEqual(
+            expected_time_with_delay(scheduled, -11),
+            datetime(2026, 10, 29, 3, 24, tzinfo=ZoneInfo("Asia/Kolkata")),
+        )
+        self.assertIsNone(expected_time_with_delay(None, 11))
 
     def test_shared_corridor_priority_overtake(self):
         route = build_routes(str(self.root))[0]

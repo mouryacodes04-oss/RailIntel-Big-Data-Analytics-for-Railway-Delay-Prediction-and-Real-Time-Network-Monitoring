@@ -11,7 +11,7 @@ Railway_Network + Railway_delays datasets
       ├── catalog loader ────────────────> PostgreSQL route/station catalog
       └── Spark batch ETL ───────────────> Hadoop HDFS Parquet silver/gold + model sample
                                                 ├── Spark MLlib delay model
-                                                └── historical station/train metrics
+                                                └── historical analytics summaries
 
 Route simulator ──> Kafka (train_positions) ──> prediction consumer ──> PostgreSQL
                                                                            │
@@ -90,17 +90,18 @@ The dashboard separates its primary workflows into four pages linked in the top 
 
 - **Trains between stations:** choose an origin, destination, and date to find matching services from the supplied `combined_schedule.csv` and train catalog. Results show only the selected origin and destination with their departure/arrival times; intermediate stops are hidden.
 - **Live station arrivals:** select a station to see only trains with a fresh simulated position that are due in the next four hours. The board shows the timetable leg as **From → To** and calculates expected arrival using the live prediction only; historical dataset averages are not shown. The window refreshes periodically and crosses midnight correctly.
-- **Live Train Status:** view scheduled trains on the India map and train list, then see the selected train's details, route labels, full-width stop-by-stop timetable, and horizontally scrollable origin-to-destination timeline below the map. The timeline shows every station and a moving position marker. Selecting a train zooms to it once; later updates move the marker but do not recenter the map.
-- **Big Data analytics:** the dedicated dashboard separates **Dataset Analytics** (Spark gold summaries, observation-weighted historical delay KPIs, railway-zone/train-type comparisons, and highest-delay stations/trains) from **Current Data Analytics** (recent Kafka event delay/speed trends, event throughput, and current fleet delay/priority distributions). Historical records and simulated streaming values are not combined; out-of-limit legacy speed events are counted and excluded from average-speed trends.
+- **Live Train Status:** view scheduled trains on the India map and train list. The selected-service number/name and full-name origin → destination appear inline, followed by current/next station details and expected arrival. The station-by-station table assigns a stable, train-specific randomized delay from 0–200 minutes to every stop, including upcoming stops; each expected arrival is its scheduled time plus that stop's simulated delay. Values do not change with live refreshes, and every route includes at least one zero-delay stop shown as **On time**. Delay and status occupy separate table columns, with each badge contained in its own cell so they cannot merge. Passed rows have a distinct background, and current/next rows use their own highlights. The table scrolls independently and remains usable on mobile. All displayed times use India Standard Time in date plus 24-hour `HH:mm` format. Selecting a train zooms to it once; later updates move the marker but do not recenter the map.
+- **Big Data analytics:** the dedicated dashboard separates **Dataset Analytics** (Spark Gold summaries, observation-weighted historical delay KPIs, and railway-zone/train-type comparisons) from **Current Data Analytics** (recent Kafka event delay/speed trends, event throughput, and current fleet delay/priority distributions). Individual historical station/train delay rankings are not displayed. Historical records and simulated streaming values are not combined; out-of-limit legacy speed events are counted and excluded from average-speed trends.
 
 Use the map layer control to switch to the rail-network-only map. Train markers are colored by predicted delay band.
+All displayed timestamps across the dashboard use India Standard Time in a consistent date and 24-hour `HH:mm` format; seconds and AM/PM markers are omitted.
 
 ### Dashboard workflows
 
 1. **Find a journey:** enter a station code or name in both station fields, choose a suggestion, select a date from the calendar or use **Today**/**Tomorrow**, then click **Find trains**. Each result shows the train, selected origin, selected destination, and their scheduled departure/arrival times; intermediate stops are not shown. Times are displayed in India Standard Time.
 2. **Check a station:** enter a station code or name under **Live station arrivals**. The board filters to arrivals with a matching train position updated within the last 15 seconds and the same service date. It shows the previous scheduled stop → selected station, scheduled arrival, the live expected arrival, and live predicted delay. Historical dataset averages are not used; if there are no matching current trains, the page says so. Use **Refresh arrivals** or wait for the 30-second refresh.
-3. **Track a train:** on **Live Train Status**, select a row or map marker. The map zooms to the train once and leaves the view in place afterward while the marker continues to update. The selected marker is purple; route stations are labeled and the next stop is highlighted. Below the map and train list, a full-width panel shows selected train details, a compact route timeline with full names for every station and station-name tooltips on hover, and the train's simulated speed beside the moving marker. The stop-by-stop timetable highlights the current station in purple and the next stop in amber. Live train positions, speed readings, and summary cards refresh every two seconds; positions older than 15 seconds are not counted as live. Historical analytics refresh every 30 seconds.
-4. **Review analytics:** open **Big Data Analytics** for zone, train-type, station, and train visualizations. Historical delay KPIs are weighted from the Spark-published train aggregates, and the live trend window is selectable from 3 to 24 hours. Streaming trend buckets are built from recent simulated Kafka events; the two sources are intentionally not combined. The simulator assigns every fifth numeric train number a synthetic on-time delay between 0 and 15 minutes so the live fleet demonstrates both on-time and delayed services. Legacy event speeds above the current priority cap remain in event totals but are excluded from average-speed charts and surfaced as a data-quality count.
+3. **Track a train:** on **Live Train Status**, select a row or map marker. The map zooms to the train once and leaves the view in place afterward while the marker continues to update. The selected marker is purple; route stations are labeled and the next stop is highlighted. The compact details card keeps the selected service and full journey on one line when space permits, and shows the current station's simulated arrival timestamp and expected next-stop arrival. The arrival timestamp is derived from accelerated timetable playback, not real railway telemetry. The full-width panel includes a compact route timeline with full station names and hover tooltips. Its timetable has separate **Delay** and **Status** columns with distinct badge styling, a unique background for passed stops, and purple/amber highlights for current/next stops. Delay values are stable per stop and do not change during the two-second live refresh. Historical analytics refresh every 30 seconds.
+4. **Review analytics:** open **Big Data Analytics** for historical zone and train-type comparisons and current simulated streaming trends. Individual historical station/train delay rankings are not shown. Historical delay KPIs are weighted from the Spark-published train aggregates, and the live trend window is selectable from 3 to 24 hours. Streaming trend buckets are built from recent simulated Kafka events; the two sources are intentionally not combined. The simulator assigns every fifth numeric train number a synthetic on-time delay between 0 and 15 minutes so the live fleet demonstrates both on-time and delayed services. Legacy event speeds above the current priority cap remain in event totals but are excluded from average-speed charts and surfaced as a data-quality count.
 
 Useful checks:
 
@@ -158,7 +159,7 @@ Restart the consumer so it loads the newly trained model:
 docker compose restart stream-processor
 ```
 
-Generated model artifacts are git-ignored. After the consumer restarts, the dashboard reports Spark MLlib-backed historical predictions and shows the station/train delay rankings. If no JSON model is available, the stream processor explicitly labels predictions as baseline; older `.joblib` models remain supported as a migration fallback.
+Generated model artifacts are git-ignored. After the consumer restarts, the dashboard reports Spark MLlib-backed historical predictions. Individual historical station/train delay rankings are not displayed. If no JSON model is available, the stream processor explicitly labels predictions as baseline; older `.joblib` models remain supported as a migration fallback.
 
 ## Data used
 
@@ -193,9 +194,7 @@ docker compose run --rm -v "$PWD/tests:/tests:ro" producer python -m unittest di
 - `GET /api/trains/between?from_station=NDLS&to_station=BCT` — matching services and intermediate timetable
 - `GET /api/stations/{station_code}/arrivals` — scheduled and expected arrivals for a station
 - `GET /api/trains/{train_no}/route` — ordered route with scheduled/expected times and station coordinates
-- `GET /api/analytics/stations` — historical station delay ranking
-- `GET /api/analytics/trains` — historical train delay ranking
-- `GET /api/analytics/overview` — observation-weighted historical coverage and delay summary
+- `GET /api/analytics/overview` — observation-weighted historical delay summary
 - `GET /api/analytics/zones` — station delay rollups by railway zone
 - `GET /api/analytics/types` — train delay rollups by train type
 - `GET /api/analytics/live-trends?hours=6` — 15-minute rollups of recent stream events (1–24 hours)
